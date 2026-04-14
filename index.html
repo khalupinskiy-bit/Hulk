@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>MQTT HULK REMOTE</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <!-- Используем другой проверенный сервис для загрузки скрипта -->
+    <script src="https://jsdelivr.net"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #000; color: #0f0; padding-top: 30px; user-select: none; }
+        .btn { width: 200px; height: 200px; border-radius: 50%; border: 8px solid #0f0; background: #111; color: #0f0; font-size: 24px; cursor: pointer; touch-action: none; }
+        .btn:active:not(:disabled) { background: #0f0; color: #000; }
+        #debug { font-size: 11px; color: #555; margin-top: 20px; text-align: left; padding: 10px; border: 1px dashed #333; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <h1>MQTT RADIO</h1>
+    <button id="talkBtn" class="btn" disabled>ЖДИТЕ...</button>
+    <div id="debug">Лог:<br></div>
+
+<script>
+    const debug = document.getElementById('debug');
+    const talkBtn = document.getElementById('talkBtn');
+    function log(m) { debug.innerHTML += m + "<br>"; }
+
+    // Пытаемся инициализироваться через интервал, пока библиотека не прогрузится
+    let checkInterval = setInterval(() => {
+        if (typeof mqtt !== 'undefined') {
+            clearInterval(checkInterval);
+            log("Библиотека загружена!");
+            startApp();
+        } else {
+            log("Ожидание скрипта...");
+        }
+    }, 1000);
+
+    function startApp() {
+        const client = mqtt.connect('wss://public:public@broker.shiftr.io', { clientId: 'hulk' + Math.random() });
+        client.on('connect', () => {
+            log("Подключено к серверу!");
+            talkBtn.disabled = false;
+            talkBtn.innerText = "ГОВОРИТЬ";
+        });
+
+        // ... тут логика захвата звука (аналогична прошлому коду) ...
+    }
+</script>
+</body>
+</html>
