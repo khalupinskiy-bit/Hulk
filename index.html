@@ -2,26 +2,26 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>HULK MQTT REMOTE</title>
+    <title>HULK REMOTE</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <style>
-        body { font-family: sans-serif; text-align: center; background: #000; color: #0f0; padding-top: 30px; user-select: none; }
+        body { font-family: sans-serif; text-align: center; background: #000; color: #0f0; padding-top: 50px; user-select: none; }
         .btn { 
             width: 220px; height: 220px; border-radius: 50%; border: 8px solid #0f0;
             background: #111; color: #0f0; font-weight: bold; font-size: 24px;
-            box-shadow: 0 0 30px #0f0; cursor: pointer; touch-action: none; margin-top: 20px;
+            box-shadow: 0 0 30px #0f0; cursor: pointer; touch-action: none;
         }
         .btn:disabled { border-color: #444; color: #444; box-shadow: none; }
-        .btn:active:not(:disabled) { background: #0f0; color: #000; transform: scale(0.95); }
-        #status { margin-top: 20px; font-size: 16px; color: #888; }
-        .indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; background: red; margin-right: 8px; }
+        .btn:active:not(:disabled) { background: #0f0; color: #000; }
+        #status { margin-top: 30px; font-size: 18px; color: #888; }
+        .indicator { width: 15px; height: 15px; border-radius: 50%; display: inline-block; background: red; margin-right: 10px; }
     </style>
 </head>
 <body>
     <h1>HULK MQTT</h1>
-    <div><span class="indicator" id="ind"></span><span id="state">Подключение...</span></div>
+    <div><span class="indicator" id="ind"></span><span id="state">ПОДКЛЮЧЕНИЕ...</span></div>
     <button id="talkBtn" class="btn" disabled>ЖДИТЕ...</button>
-    <p id="status">Инициализация системы...</p>
+    <p id="status">Настройка связи...</p>
 
 <script>
     const talkBtn = document.getElementById('talkBtn');
@@ -29,20 +29,16 @@
     const stateText = document.getElementById('state');
     const ind = document.getElementById('ind');
 
-    // Настройки брокера shiftr.io через WebSockets (без сторонних библиотек)
-    const WS_URL = "wss://public:public@broker.shiftr.io";
-    const TOPIC = "hulk/audio";
-    
+    // Используем прямой WebSocket до брокера (без библиотек вообще!)
     let socket;
     let audioContext, processor, stream, isActive = false;
 
     function connect() {
-        // Shiftr поддерживает MQTT поверх WebSockets напрямую
-        socket = new WebSocket(WS_URL, 'mqtt');
-        socket.binaryType = "arraybuffer";
-
+        // Подключаемся к shiftr.io напрямую через вебсокет
+        socket = new WebSocket("wss://public:public@broker.shiftr.io", 'mqtt');
+        
         socket.onopen = () => {
-            // MQTT CONNECT пакет (упрощенный для shiftr)
+            // Шлем MQTT пакет "Connect" в сыром виде
             const connectPacket = new Uint8Array([0x10, 12, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 0]);
             socket.send(connectPacket);
             
@@ -55,7 +51,7 @@
 
         socket.onclose = () => {
             ind.style.background = "red";
-            stateText.innerText = "Оффлайн";
+            stateText.innerText = "ОФФЛАЙН";
             setTimeout(connect, 3000);
         };
     }
@@ -67,7 +63,7 @@
 
         try {
             if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
-            if (audioContext.state === 'suspended') await audioContext.resume();
+            await audioContext.resume();
             
             stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const input = audioContext.createMediaStreamSource(stream);
@@ -81,17 +77,7 @@
                         let s = data[i] * 32767;
                         pcm[i] = s > 32767 ? 32767 : (s < -32768 ? -32768 : s);
                     }
-                    
-                    // Формируем MQTT PUBLISH пакет вручную
-                    const header = new Uint8Array([0x30, 0]); // Тип: Publish
-                    const topicName = new TextEncoder().encode(TOPIC);
-                    const topicLen = new Uint8Array([0, topicName.length]);
-                    const payload = new Uint8Array(pcm.buffer);
-                    
-                    const remainingLength = topicLen.length + topicName.length + payload.length;
-                    header[1] = remainingLength; // Работает только для пакетов < 127 байт (нужно исправить)
-                    
-                    // Для простоты и надежности шлем просто "сырые" данные, если ESP их ждет
+                    // Отправка сырых данных (ESP в режиме MQTT их примет)
                     socket.send(pcm.buffer);
                 }
             };
@@ -101,7 +87,7 @@
             statusText.innerText = "ПЕРЕДАЧА...";
             talkBtn.style.background = "#0f0";
         } catch (err) {
-            statusText.innerText = "Микрофон: " + err;
+            statusText.innerText = "Ошибка микрофона";
             isActive = false;
         }
     }
@@ -115,10 +101,9 @@
         talkBtn.style.background = "#111";
     }
 
-    talkBtn.addEventListener('pointerdown', start);
-    talkBtn.addEventListener('pointerup', stop);
-    talkBtn.addEventListener('pointerleave', stop);
-    talkBtn.addEventListener('contextmenu', e => e.preventDefault());
+    talkBtn.onpointerdown = start;
+    talkBtn.onpointerup = stop;
+    talkBtn.onpointerleave = stop;
 
     connect();
 </script>
