@@ -1,19 +1,21 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8"><title>HULK MQTT FINAL</title>
+    <meta charset="utf-8"><title>HULK MQTT REMOTE</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <!-- Библиотека подключается ПЕРЕД скриптом -->
+    <script src="https://jsdelivr.net"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background: #000; color: #0f0; padding-top: 30px; user-select: none; }
         .btn { width: 220px; height: 220px; border-radius: 50%; border: 8px solid #0f0; background: #111; color: #0f0; font-size: 24px; cursor: pointer; touch-action: none; margin-top: 20px; }
         .btn:disabled { border-color: #444; color: #444; box-shadow: none; }
         .indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; background: red; margin-right: 8px; }
-        #debug { font-size: 11px; color: #555; margin-top: 20px; text-align: left; padding: 10px; border: 1px solid #222; width: 80%; display: inline-block; font-family: monospace; }
+        #debug { font-size: 11px; color: #555; margin-top: 20px; text-align: left; padding: 10px; border: 1px solid #222; width: 85%; display: inline-block; font-family: monospace; overflow-y: auto; max-height: 150px; }
     </style>
 </head>
 <body>
     <h1>HULK REMOTE</h1>
-    <div><span class="indicator" id="ind"></span><span id="state">ПОДКЛЮЧЕНИЕ...</span></div>
+    <div><span class="indicator" id="ind"></span><span id="state">ПОИСК СЕТИ...</span></div>
     <button id="talkBtn" class="btn" disabled>ЖДИТЕ...</button>
     <div id="debug">Лог:<br></div>
 
@@ -25,76 +27,65 @@
 
     function log(m) { debug.innerHTML += "> " + m + "<br>"; debug.scrollTop = debug.scrollHeight; }
 
-    const MQTT_URL = "wss://://hivemq.com";
     const TOPIC = "hulk/audio/unique_99";
-    let socket, audioContext, processor, stream, isActive = false;
+    let client, audioContext, processor, stream, isActive = false;
 
     function init() {
-        log("Открытие сокета...");
-        socket = new WebSocket(MQTT_URL, 'mqtt');
-        socket.binaryType = "arraybuffer";
+        log("Проверка библиотеки...");
+        if (typeof mqtt === 'undefined') {
+            log("Ошибка: Скрипт MQTT не загружен!");
+            return;
+        }
 
-        socket.onopen = () => {
-            log("Сокет открыт. Авторизация...");
-            // Пакет CONNECT для HiveMQ
-            const connect = new Uint8Array([0x10, 12, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 0]);
-            socket.send(connect);
-        };
+        log("Подключение к HiveMQ (443)...");
+        // Исправленный адрес без лишних знаков
+        client = mqtt.connect('wss://://hivemq.com');
 
-        socket.onmessage = (e) => {
-            const data = new Uint8Array(e.data);
-            if (data[0] == 0x20) { // CONNACK (Принято)
-                log("В СЕТИ!");
-                ind.style.background = "#0f0";
-                stateText.innerText = "В СЕТИ";
-                talkBtn.disabled = false;
-                talkBtn.innerText = "ГОВОРИТЬ";
-            }
-        };
+        client.on('connect', () => {
+            log("В СЕТИ!");
+            ind.style.background = "#0f0";
+            stateText.innerText = "В СЕТИ";
+            talkBtn.disabled = false;
+            talkBtn.innerText = "ГОВОРИТЬ";
+        });
 
-        socket.onerror = (e) => log("Ошибка сокета!");
-        socket.onclose = () => { log("Сокет закрыт"); setTimeout(init, 3000); };
+        client.on('error', (err) => log("Ошибка сети: " + err));
+        client.on('offline', () => {
+            log("Потеря связи...");
+            ind.style.background = "red";
+            talkBtn.disabled = true;
+        });
     }
 
     async function start(e) {
         if (e) e.preventDefault();
-        if (isActive || socket.readyState !== 1) return;
+        if (isActive || !client || !client.connected) return;
         isActive = true;
         try {
             if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
             await audioContext.resume();
+            
             stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const input = audioContext.createMediaStreamSource(stream);
             processor = audioContext.createScriptProcessor(2048, 1, 1);
             
             processor.onaudioprocess = (e) => {
-                if (isActive && socket.readyState === 1) {
+                if (isActive && client.connected) {
                     const data = e.inputBuffer.getChannelData(0);
                     const pcm = new Int16Array(data.length);
                     for (let i = 0; i < data.length; i++) {
                         let s = data[i] * 32767;
-                        pcm[i] = s > 32767 ? 32767 : (s < -32768 ? -32768 : s);
+                        pcm[i] = (s > 32767) ? 32767 : (s < -32768 ? -32768 : s);
                     }
-                    
-                    // Упрощенный MQTT Publish заголовок
-                    const t = TOPIC;
-                    const payload = new Uint8Array(pcm.buffer);
-                    const remain = 2 + t.length + payload.length;
-                    const head = [0x30, remain];
-                    const msg = new Uint8Array([head[0], head[1], 0, t.length]);
-                    
-                    const final = new Uint8Array(msg.length + t.length + payload.length);
-                    final.set(msg);
-                    for(let i=0; i<t.length; i++) final[4+i] = t.charCodeAt(i);
-                    final.set(payload, 4 + t.length);
-                    
-                    socket.send(final);
+                    // Отправляем бинарные данные
+                    client.publish(TOPIC, pcm.buffer);
                 }
             };
 
             input.connect(processor);
             processor.connect(audioContext.destination);
-            log("Трансляция...");
+            log("Голос идет...");
+            talkBtn.style.background = "#0f0";
         } catch (err) { log("Микрофон: " + err); isActive = false; }
     }
 
@@ -104,9 +95,15 @@
         if (processor) processor.disconnect();
         if (stream) stream.getTracks().forEach(t => t.stop());
         log("Стоп");
+        talkBtn.style.background = "#111";
     }
 
-    talkBtn.onpointerdown = start; talkBtn.onpointerup = stop; talkBtn.onpointerleave = stop;
-    init();
+    talkBtn.addEventListener('pointerdown', start);
+    talkBtn.addEventListener('pointerup', stop);
+    talkBtn.addEventListener('pointerleave', stop);
+    talkBtn.addEventListener('contextmenu', e => e.preventDefault());
+
+    // Запуск через секунду после загрузки
+    setTimeout(init, 1000);
 </script>
 </body></html>
