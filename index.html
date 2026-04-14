@@ -1,13 +1,12 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
-    <title>HULK PTT</title>
+    <meta charset="utf-8"><title>HULK PTT</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <style>
         body { font-family: sans-serif; text-align: center; background: #000; color: #0f0; padding-top: 30px; }
         .btn { width: 220px; height: 220px; border-radius: 50%; border: 8px solid #0f0; background: #111; color: #0f0; font-size: 24px; cursor: pointer; touch-action: none; box-shadow: 0 0 20px #0f0; }
-        .btn:active { background: #0f0; color: #000; }
+        .btn:active:not(:disabled) { background: #0f0; color: #000; }
         .btn:disabled { border-color: #444; color: #444; box-shadow: none; }
         #debug { font-size: 11px; color: #555; margin-top: 20px; text-align: left; padding: 10px; border: 1px solid #222; font-family: monospace; width: 85%; display: inline-block; overflow-y: auto; max-height: 150px; }
     </style>
@@ -23,29 +22,28 @@
     const header = document.getElementById('header');
     function log(m) { debug.innerHTML += "> " + m + "<br>"; debug.scrollTop = debug.scrollHeight; }
 
-    // ИСПРАВЛЕННЫЙ URL (ПОРТ 443)
-    const WS_URL = "wss://hivemq.com";
+    // Переходим на shiftr.io (порт 443 — самый пробивной)
+    const WS_URL = "wss://public:public@broker.shiftr.io";
     const TOPIC = "hulk/audio/unique_99";
     let socket, audioContext, processor, stream, isActive = false;
 
     function connect() {
-        log("Попытка соединения...");
+        log("Соединение с Shiftr...");
         try {
-            // Исправленный конструктор WebSocket
             socket = new WebSocket(WS_URL, 'mqtt');
             socket.binaryType = "arraybuffer";
 
             socket.onopen = () => {
                 log("ОТКРЫТО. Авторизация...");
-                // Пакет MQTT Connect (бинарный)
-                socket.send(new Uint8Array([0x10, 12, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 0]));
+                // Пакет CONNECT (MQTT 3.1.1)
+                const pkt = new Uint8Array([0x10, 12, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 0]);
+                socket.send(pkt);
             };
 
             socket.onmessage = (e) => {
                 const data = new Uint8Array(e.data);
-                // Проверка CONNACK (0x20 0x02 0x00 0x00)
-                if (data[0] === 0x20) {
-                    log("ГОТОВ! В СЕТИ.");
+                if (data[0] === 0x20) { // CONNACK
+                    log("В СЕТИ!");
                     header.innerText = "В СЕТИ";
                     header.style.color = "#0f0";
                     talkBtn.disabled = false;
@@ -53,13 +51,13 @@
                 }
             };
 
-            socket.onerror = (e) => log("ОШИБКА СЕТИ (проверьте интернет)");
+            socket.onerror = () => log("ОШИБКА СЕТИ");
             socket.onclose = () => { 
                 log("ЗАКРЫТО. Рестарт..."); 
                 talkBtn.disabled = true;
                 setTimeout(connect, 3000); 
             };
-        } catch (e) { log("System error: " + e); }
+        } catch (e) { log("Error: " + e); }
     }
 
     async function start(e) {
@@ -79,17 +77,17 @@
                     const pcm = new Int16Array(data.length);
                     for (let i = 0; i < data.length; i++) {
                         let s = data[i] * 32767;
-                        pcm[i] = s > 32767 ? 32767 : (s < -32768 ? -32768 : s);
+                        pcm[i] = (s > 32767) ? 32767 : (s < -32768 ? -32768 : s);
                     }
                     
-                    // Ручная сборка MQTT Publish пакета
+                    // Сборка MQTT PUBLISH (уровни: 0x30, длина, топик_длина, топик, данные)
                     const t = TOPIC;
                     const payload = new Uint8Array(pcm.buffer);
                     const remain = 2 + t.length + payload.length;
                     const pkt = new Uint8Array(2 + remain);
                     
-                    pkt[0] = 0x30; // Publish
-                    pkt[1] = remain;
+                    pkt[0] = 0x30; 
+                    pkt[1] = remain; 
                     pkt[2] = 0; pkt[3] = t.length;
                     for(let i=0; i<t.length; i++) pkt[4+i] = t.charCodeAt(i);
                     pkt.set(payload, 4 + t.length);
@@ -97,9 +95,8 @@
                     socket.send(pkt);
                 }
             };
-            input.connect(processor); 
-            processor.connect(audioContext.destination);
-            log("ПЕРЕДАЧА...");
+            input.connect(processor); processor.connect(audioContext.destination);
+            log("ГОЛОС...");
             talkBtn.style.background = "#0f0";
         } catch (err) { log("Микрофон: " + err); isActive = false; }
     }
@@ -113,12 +110,7 @@
         log("СТОП");
     }
 
-    talkBtn.onpointerdown = start; 
-    talkBtn.onpointerup = stop;
-    talkBtn.onpointerleave = stop;
-    talkBtn.addEventListener('contextmenu', e => e.preventDefault());
-
+    talkBtn.onpointerdown = start; talkBtn.onpointerup = stop;
     connect();
 </script>
-</body>
-</html>
+</body></html>
