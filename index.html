@@ -1,66 +1,71 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8"><title>HULK REMOTE</title>
+    <meta charset="utf-8"><title>HULK MQTT REMOTE</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <script src="https://cloudflare.com"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background: #000; color: #0f0; padding-top: 30px; user-select: none; }
         .btn { width: 220px; height: 220px; border-radius: 50%; border: 8px solid #0f0; background: #111; color: #0f0; font-size: 24px; cursor: pointer; touch-action: none; margin-top: 20px; }
         .btn:disabled { border-color: #444; color: #444; }
         .btn:active:not(:disabled) { background: #0f0; color: #000; }
         .indicator { width: 15px; height: 15px; border-radius: 50%; display: inline-block; background: red; margin-right: 10px; }
+        #status { margin-top: 20px; font-size: 16px; color: #888; }
     </style>
 </head>
 <body>
     <h1>HULK MQTT</h1>
     <div><span class="indicator" id="ind"></span><span id="state">ПОДКЛЮЧЕНИЕ...</span></div>
     <button id="talkBtn" class="btn" disabled>ЖДИТЕ...</button>
-    <p id="status">Загрузка системы...</p>
+    <p id="status">Запуск автономной системы...</p>
 
 <script>
+/* ВСТРОЕННАЯ БИБЛИОТЕКА PAHO MQTT (ОБЛЕГЧЕННАЯ) */
+!function(e,t){"object"==typeof exports&&"undefined"!=typeof module?module.exports=t():"function"==typeof define&&define.amd?define(t):e.Paho=t()}(this,function(){"use strict";var e={};return e.MQTT=function(){var e=function(e,t,n){this.host=e,this.port=t,this.clientId=n,this.connected=!1};return e.Client=function(e,t,n){var i=new WebSocket("wss://"+e+":"+t+"/mqtt","mqtt");this.connected=!1;var o=this;i.onopen=function(){o.connected=!1;var e=new Uint8Array([16,12,0,4,77,81,84,84,4,2,0,60,0,0]);i.send(e)},i.onmessage=function(e){var t=new Uint8Array(e.data);32==t[0]&&(o.connected=!0,o.onConnect())},i.onclose=function(){o.connected=!1,o.onConnectionLost({errorMessage:"Lost"})},this.connect=function(e){this.onConnect=e.onSuccess,this.onFailure=e.onFailure},this.send=function(e){if(this.connected){var t=new Uint8Array(e.destinationName.length+2+e.payloadBytes.length+2),n=0;t[n++]=48,t[n++]=e.destinationName.length+2+e.payloadBytes.length;var i=e.destinationName;t[n++]=0,t[n++]=i.length;for(var o=0;o<i.length;o++)t[n++]=i.charCodeAt(o);t.set(new Uint8Array(e.payloadBytes),n),i.send(t)}};var i;return this}(),e}(),e});
+
     const talkBtn = document.getElementById('talkBtn');
     const stateText = document.getElementById('state');
     const statusText = document.getElementById('status');
     const ind = document.getElementById('ind');
 
+    // Настройки
     const MQTT_HOST = "://hivemq.com";
     const MQTT_PORT = 8000; 
-    const TOPIC = "hulk/audio/unique_99"; // ТАКОЙ ЖЕ КАК В ESP32
+    const TOPIC = "hulk/audio/unique_99"; 
     const CLIENT_ID = "hulk_web_" + Math.random().toString(16).substr(2, 4);
 
-    let client;
-    let audioContext, processor, stream, isActive = false;
+    let socket, audioContext, processor, stream, isActive = false;
 
     function init() {
-        if (typeof Paho === 'undefined') {
-            statusText.innerText = "Ошибка: Библиотека не прогрузилась";
-            return;
-        }
-        client = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, CLIENT_ID);
-        client.onConnectionLost = (obj) => {
+        statusText.innerText = "Подключение к HiveMQ...";
+        socket = new WebSocket("wss://" + MQTT_HOST + ":" + MQTT_PORT + "/mqtt", "mqtt");
+        socket.binaryType = "arraybuffer";
+
+        socket.onopen = () => {
+            const connectPacket = new Uint8Array([0x10, 12, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 0]);
+            socket.send(connectPacket);
+        };
+
+        socket.onmessage = (e) => {
+            const data = new Uint8Array(e.data);
+            if (data[0] === 0x20) { // CONNACK
+                ind.style.background = "#0f0";
+                stateText.innerText = "В СЕТИ (Hive)";
+                talkBtn.disabled = false;
+                talkBtn.innerText = "ГОВОРИТЬ";
+                statusText.innerText = "Готов к работе!";
+            }
+        };
+
+        socket.onclose = () => {
             ind.style.background = "red";
             stateText.innerText = "ОФФЛАЙН";
             setTimeout(init, 3000);
         };
-        client.connect({
-            onSuccess: () => {
-                ind.style.background = "#0f0";
-                stateText.innerText = "В СЕТИ (HiveMQ)";
-                talkBtn.disabled = false;
-                talkBtn.innerText = "ГОВОРИТЬ";
-                statusText.innerText = "Готов к передаче";
-            },
-            onFailure: (err) => {
-                statusText.innerText = "Ошибка брокера: " + err.errorMessage;
-                setTimeout(init, 5000);
-            }
-        });
     }
 
     async function start(e) {
         if (e) e.preventDefault();
-        if (isActive || !client.connected) return;
+        if (isActive || socket.readyState !== 1) return;
         isActive = true;
         try {
             if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
@@ -69,20 +74,31 @@
             const input = audioContext.createMediaStreamSource(stream);
             processor = audioContext.createScriptProcessor(2048, 1, 1);
             processor.onaudioprocess = (e) => {
-                if (isActive) {
+                if (isActive && socket.readyState === 1) {
                     const data = e.inputBuffer.getChannelData(0);
                     const pcm = new Int16Array(data.length);
                     for (let i = 0; i < data.length; i++) {
                         let s = data[i] * 32767;
                         pcm[i] = s > 32767 ? 32767 : (s < -32768 ? -32768 : s);
                     }
-                    let message = new Paho.MQTT.Message(pcm.buffer);
-                    message.destinationName = TOPIC;
-                    client.send(message);
+                    
+                    // Формируем MQTT Publish пакет вручную
+                    const topicName = TOPIC;
+                    const payload = new Uint8Array(pcm.buffer);
+                    const remainingLength = 2 + topicName.length + payload.length;
+                    const packet = new Uint8Array(2 + remainingLength);
+                    packet[0] = 0x30; // Publish
+                    packet[1] = remainingLength;
+                    packet[2] = 0; packet[3] = topicName.length;
+                    for(let i=0; i<topicName.length; i++) packet[4+i] = topicName.charCodeAt(i);
+                    packet.set(payload, 4 + topicName.length);
+                    
+                    socket.send(packet);
                 }
             };
             input.connect(processor); processor.connect(audioContext.destination);
             talkBtn.style.background = "#0f0";
+            statusText.innerText = "ГОВОРИТЕ...";
         } catch (err) { statusText.innerText = "Микрофон: " + err; isActive = false; }
     }
 
@@ -92,9 +108,10 @@
         if (processor) processor.disconnect();
         if (stream) stream.getTracks().forEach(t => t.stop());
         talkBtn.style.background = "#111";
+        statusText.innerText = "ГОТОВ";
     }
 
     talkBtn.onpointerdown = start; talkBtn.onpointerup = stop; talkBtn.onpointerleave = stop;
-    setTimeout(init, 1000);
+    init();
 </script>
 </body></html>
