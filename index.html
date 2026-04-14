@@ -3,64 +3,64 @@
 <head>
     <meta charset="utf-8"><title>HULK REMOTE</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <script src="https://cloudflare.com"></script>
     <style>
         body { font-family: sans-serif; text-align: center; background: #000; color: #0f0; padding-top: 30px; user-select: none; }
         .btn { width: 220px; height: 220px; border-radius: 50%; border: 8px solid #0f0; background: #111; color: #0f0; font-size: 24px; cursor: pointer; touch-action: none; margin-top: 20px; }
         .btn:disabled { border-color: #444; color: #444; }
         .btn:active:not(:disabled) { background: #0f0; color: #000; }
-        .indicator { width: 12px; height: 12px; border-radius: 50%; display: inline-block; background: red; margin-right: 8px; }
-        #log { font-size: 11px; color: #555; margin-top: 20px; font-family: monospace; }
+        .indicator { width: 15px; height: 15px; border-radius: 50%; display: inline-block; background: red; margin-right: 10px; }
     </style>
 </head>
 <body>
     <h1>HULK MQTT</h1>
     <div><span class="indicator" id="ind"></span><span id="state">ПОДКЛЮЧЕНИЕ...</span></div>
     <button id="talkBtn" class="btn" disabled>ЖДИТЕ...</button>
-    <div id="log">Лог событий:<br></div>
+    <p id="status">Загрузка системы...</p>
 
 <script>
     const talkBtn = document.getElementById('talkBtn');
     const stateText = document.getElementById('state');
+    const statusText = document.getElementById('status');
     const ind = document.getElementById('ind');
-    const logDiv = document.getElementById('log');
 
-    function addLog(msg) { logDiv.innerHTML += "> " + msg + "<br>"; }
+    const MQTT_HOST = "://hivemq.com";
+    const MQTT_PORT = 8000; 
+    const TOPIC = "hulk/audio/unique_99"; // ТАКОЙ ЖЕ КАК В ESP32
+    const CLIENT_ID = "hulk_web_" + Math.random().toString(16).substr(2, 4);
 
-    let socket;
+    let client;
     let audioContext, processor, stream, isActive = false;
 
-    function connect() {
-        addLog("Попытка открытия WebSocket...");
-        // Прямое подключение к shiftr.io
-        socket = new WebSocket("wss://public:public@broker.shiftr.io", 'mqtt');
-        
-        socket.onopen = () => {
-            addLog("WS Открыт. Шлю MQTT Connect...");
-            const connectPacket = new Uint8Array([0x10, 12, 0, 4, 77, 81, 84, 84, 4, 2, 0, 60, 0, 0]);
-            socket.send(connectPacket);
-            
-            ind.style.background = "#0f0";
-            stateText.innerText = "В СЕТИ";
-            talkBtn.disabled = false;
-            talkBtn.innerText = "ГОВОРИТЬ";
-            addLog("УСПЕХ: В сети");
-        };
-
-        socket.onclose = (e) => {
+    function init() {
+        if (typeof Paho === 'undefined') {
+            statusText.innerText = "Ошибка: Библиотека не прогрузилась";
+            return;
+        }
+        client = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, CLIENT_ID);
+        client.onConnectionLost = (obj) => {
             ind.style.background = "red";
             stateText.innerText = "ОФФЛАЙН";
-            addLog("WS Закрыт: " + e.code);
-            setTimeout(connect, 3000);
+            setTimeout(init, 3000);
         };
-
-        socket.onerror = (err) => {
-            addLog("WS Ошибка. Возможно, блокировка.");
-        };
+        client.connect({
+            onSuccess: () => {
+                ind.style.background = "#0f0";
+                stateText.innerText = "В СЕТИ (HiveMQ)";
+                talkBtn.disabled = false;
+                talkBtn.innerText = "ГОВОРИТЬ";
+                statusText.innerText = "Готов к передаче";
+            },
+            onFailure: (err) => {
+                statusText.innerText = "Ошибка брокера: " + err.errorMessage;
+                setTimeout(init, 5000);
+            }
+        });
     }
 
     async function start(e) {
         if (e) e.preventDefault();
-        if (isActive || socket.readyState !== 1) return;
+        if (isActive || !client.connected) return;
         isActive = true;
         try {
             if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
@@ -69,19 +69,21 @@
             const input = audioContext.createMediaStreamSource(stream);
             processor = audioContext.createScriptProcessor(2048, 1, 1);
             processor.onaudioprocess = (e) => {
-                if (isActive && socket.readyState === 1) {
+                if (isActive) {
                     const data = e.inputBuffer.getChannelData(0);
                     const pcm = new Int16Array(data.length);
                     for (let i = 0; i < data.length; i++) {
                         let s = data[i] * 32767;
                         pcm[i] = s > 32767 ? 32767 : (s < -32768 ? -32768 : s);
                     }
-                    socket.send(pcm.buffer);
+                    let message = new Paho.MQTT.Message(pcm.buffer);
+                    message.destinationName = TOPIC;
+                    client.send(message);
                 }
             };
             input.connect(processor); processor.connect(audioContext.destination);
             talkBtn.style.background = "#0f0";
-        } catch (err) { addLog("Микрофон: " + err); isActive = false; }
+        } catch (err) { statusText.innerText = "Микрофон: " + err; isActive = false; }
     }
 
     function stop(e) {
@@ -93,6 +95,6 @@
     }
 
     talkBtn.onpointerdown = start; talkBtn.onpointerup = stop; talkBtn.onpointerleave = stop;
-    connect();
+    setTimeout(init, 1000);
 </script>
 </body></html>
