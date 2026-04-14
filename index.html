@@ -1,1 +1,56 @@
+<script>
+    const talkBtn = document.getElementById('talkBtn');
+    const stateText = document.getElementById('state');
+    const debug = document.getElementById('debug');
+    const ind = document.getElementById('ind');
 
+    function log(m) { debug.innerHTML += "> " + m + "<br>"; debug.scrollTop = debug.scrollHeight; }
+
+    // Чистый адрес без спецсимволов @ и : внутри
+    const WS_URL = "wss://broker.shiftr.io/mqtt";
+    const TOPIC = "hulk/audio/unique_99";
+    
+    let socket, audioContext, processor, stream, isActive = false;
+
+    function connect() {
+        log("Подключение к Shiftr...");
+        // Указываем протокол 'mqtt' вторым аргументом
+        socket = new WebSocket(WS_URL, 'mqtt');
+        socket.binaryType = "arraybuffer";
+
+        socket.onopen = () => {
+            log("WS Открыт. Авторизация...");
+            // Формируем честный пакет CONNECT с логином public и паролем public
+            // Это пробивает защиту браузеров
+            const connectPacket = new Uint8Array([
+                0x10, 26, 0, 4, 77, 81, 84, 84, 4, 194, 0, 60, 0, 4, 104, 117, 
+                108, 107, 0, 6, 112, 117, 98, 108, 105, 99, 0, 6, 112, 117, 98, 108, 105, 99
+            ]);
+            socket.send(connectPacket);
+        };
+
+        socket.onmessage = (e) => {
+            const data = new Uint8Array(e.data);
+            if (data[0] == 0x20) { 
+                log("УСПЕХ: В СЕТИ!");
+                ind.style.background = "#0f0";
+                stateText.innerText = "В СЕТИ (Shiftr)";
+                talkBtn.disabled = false;
+                talkBtn.innerText = "ГОВОРИТЬ";
+            }
+        };
+
+        socket.onclose = () => {
+            log("Рестарт через 3 сек...");
+            ind.style.background = "red";
+            talkBtn.disabled = true;
+            setTimeout(connect, 3000);
+        };
+
+        socket.onerror = (e) => log("Ошибка сокета!");
+    }
+    
+    // ... функции start/stop остаются такими же ...
+    
+    connect();
+</script>
